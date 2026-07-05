@@ -10,6 +10,8 @@ import {
   buildFilterString,
   getExportMimeType,
   serializeOperations,
+  deserializeOperations,
+  filterPresets,
 } from '../utils/imageOps'
 
 type CropperRef = {
@@ -37,11 +39,103 @@ const exportQuality = ref(0.92)
 const cropAspectRatio = ref<number | null>(null)
 const dragOver = ref(false)
 const operationsJsonInput = ref<HTMLInputElement | null>(null)
+const statusMessage = ref<string | null>(null)
+const statusType = ref<'success' | 'error' | 'info'>('info')
+const snackbarVisible = ref(false)
+let statusTimer: number | null = null
+const selectedFilterPreset = ref<string>('default')
+const loadedOperationsFile = ref<string | null>(null)
 const VueCropper = resolveVueCropperComponent(VueCropperRaw)
 
 const previewStyle = computed(() => ({
   filter: buildFilterString(operations.value),
 }))
+
+const filterControls: Array<{
+  key: Exclude<keyof ImageOperations, 'rotate' | 'scaleX' | 'scaleY' | 'crop'>
+  label: string
+  min: number
+  max: number
+  step: number
+  unit: string
+}> = [
+  { key: 'brightness', label: 'Brightness', min: 0, max: 200, step: 1, unit: '%' },
+  { key: 'contrast', label: 'Contrast', min: 0, max: 200, step: 1, unit: '%' },
+  { key: 'saturation', label: 'Saturation', min: 0, max: 200, step: 1, unit: '%' },
+  { key: 'grayscale', label: 'Grayscale', min: 0, max: 100, step: 1, unit: '%' },
+  { key: 'sepia', label: 'Sepia', min: 0, max: 100, step: 1, unit: '%' },
+  { key: 'blur', label: 'Blur', min: 0, max: 20, step: 0.5, unit: 'px' },
+  { key: 'hueRotate', label: 'Hue rotate', min: 0, max: 360, step: 1, unit: '°' },
+  { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, unit: '%' },
+]
+
+const filterKeys: Array<Exclude<keyof ImageOperations, 'rotate' | 'scaleX' | 'scaleY' | 'crop'>> = [
+  'brightness',
+  'contrast',
+  'saturation',
+  'grayscale',
+  'sepia',
+  'blur',
+  'hueRotate',
+  'opacity',
+]
+
+const operationsSummary = computed(() => {
+  const op = operations.value
+  return `B ${op.brightness}% · C ${op.contrast}% · S ${op.saturation}% · G ${op.grayscale}% · Sepia ${op.sepia}% · Blur ${op.blur}px · Hue ${op.hueRotate}° · Opacity ${op.opacity}%`
+})
+
+const presetItems = computed(() => [
+  { title: 'Default', value: 'default' },
+  { title: 'Vintage', value: 'vintage' },
+  { title: 'Black & White', value: 'bw' },
+  { title: 'Warm', value: 'warm' },
+])
+
+const setStatus = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+  statusMessage.value = message
+  statusType.value = type
+  snackbarVisible.value = true
+  if (statusTimer !== null) {
+    window.clearTimeout(statusTimer)
+  }
+  statusTimer = window.setTimeout(() => {
+    snackbarVisible.value = false
+    statusTimer = null
+  }, 3200)
+}
+
+const markCustomPreset = () => {
+  selectedFilterPreset.value = 'custom'
+}
+
+const resetOperation = (key: keyof ImageOperations) => {
+  const defaults = defaultOperations()
+  commitOperation((current) => {
+    if (key === 'crop') {
+      current.crop = null
+    } else {
+      const k = key as Exclude<keyof ImageOperations, 'crop'>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(current as any)[k] = (defaults as any)[k]
+    }
+  }, false)
+  setStatus(`Reset ${key} to default`, 'info')
+}
+
+const applyFilterPreset = (presetName: string) => {
+  const preset = filterPresets[presetName] ?? {}
+  commitOperation((current) => {
+    const defaults = defaultOperations()
+    filterKeys.forEach((key) => {
+      const k = key as Exclude<keyof ImageOperations, 'crop'>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(current as any)[k] = (preset as any)[k] ?? (defaults as any)[k]
+    })
+  }, false)
+  selectedFilterPreset.value = presetName
+  setStatus(`Applied ${presetName} preset`, 'success')
+}
 
 const pushHistory = () => {
   history.value = [...history.value, cloneOperations(operations.value)]
@@ -312,6 +406,7 @@ const downloadOperations = () => {
   link.download = `${originalFileName.value.replace(/\.[^.]+$/, '')}.json`
   link.click()
   URL.revokeObjectURL(url)
+  setStatus('Exported operations JSON', 'success')
 }
 
 const applyOperationsFromJson = async (event: Event) => {
@@ -325,15 +420,19 @@ const applyOperationsFromJson = async (event: Event) => {
   const text = await file.text()
   try {
     const parsed = JSON.parse(text)
-    if (parsed?.operations) {
-      operations.value = {
-        ...defaultOperations(),
-        ...parsed.operations,
-      }
+    const loaded = deserializeOperations(parsed)
+    if (loaded) {
+      operations.value = loaded
+      loadedOperationsFile.value = file.name
+      selectedFilterPreset.value = 'custom'
       renderPreview()
+      setStatus(`Loaded operations from ${file.name}`, 'success')
+      return
     }
+
+    setStatus('JSON file does not contain operations', 'error')
   } catch {
-    // ignore invalid JSON
+    setStatus('Invalid JSON file', 'error')
   }
 }
 
@@ -363,7 +462,9 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
           Upload an image, crop it with the built-in cropper, adjust brightness/contrast/saturation,
           and export the result.
         </p>
-
+        <v-snackbar v-model="snackbarVisible" :type="statusType" location="top">
+          {{ statusMessage }}
+        </v-snackbar>
         <div
           class="drop-zone"
           :class="{ 'drop-active': dragOver }"
@@ -406,88 +507,98 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
                   alt="Source image"
                 />
               </div>
-              <div class="d-flex flex-wrap gap-2 mt-3">
-                <v-btn color="primary" @click="applyCrop">Apply</v-btn>
-                <v-btn variant="outlined" @click="zoomCropper(0.1)">Zoom +</v-btn>
-                <v-btn variant="outlined" @click="zoomCropper(-0.1)">Zoom -</v-btn>
-                <v-btn variant="outlined" @click="rotateImage(90)">Rotate +90°</v-btn>
-                <v-btn variant="outlined" @click="rotateImage(-90)">Rotate -90°</v-btn>
-                <v-btn variant="outlined" @click="flipImage('x')">Flip X</v-btn>
-                <v-btn variant="outlined" @click="flipImage('y')">Flip Y</v-btn>
-                <v-btn variant="outlined" @click="undo" :disabled="!history.length">Undo</v-btn>
-                <v-btn variant="outlined" @click="redo" :disabled="!future.length">Redo</v-btn>
-                <v-btn variant="outlined" @click="resetEdits">Reset all</v-btn>
-              </div>
-              <div class="d-flex flex-wrap gap-2 mt-3">
-                <v-select
-                  v-model="cropAspectRatio"
-                  :items="[
-                    { title: 'Free', value: null },
-                    { title: '1:1', value: 1 },
-                    { title: '4:3', value: 4 / 3 },
-                    { title: '16:9', value: 16 / 9 },
-                  ]"
-                  label="Crop ratio"
-                  density="compact"
-                  style="max-width: 180px"
-                  @update:model-value="setAspectRatioPreset"
-                />
-                <v-btn variant="tonal" @click="triggerOperationsLoad">Load ops JSON</v-btn>
-              </div>
+
+              <v-card variant="outlined" class="mt-4">
+                <v-card-title class="text-subtitle-1">Cropper controls</v-card-title>
+                <v-card-text>
+                  <div class="d-flex flex-wrap ga-2">
+                    <v-btn color="primary" @click="applyCrop">Apply</v-btn>
+                    <v-btn variant="outlined" @click="zoomCropper(0.1)">Zoom +</v-btn>
+                    <v-btn variant="outlined" @click="zoomCropper(-0.1)">Zoom -</v-btn>
+                  </div>
+                  <div class="d-flex flex-wrap gap-2 mt-3 align-center">
+                    <v-select
+                      v-model="cropAspectRatio"
+                      :items="[
+                        { title: 'Free', value: null },
+                        { title: '1:1', value: 1 },
+                        { title: '4:3', value: 4 / 3 },
+                        { title: '16:9', value: 16 / 9 },
+                      ]"
+                      label="Crop ratio"
+                      density="compact"
+                      style="max-width: 220px"
+                      @update:model-value="setAspectRatioPreset"
+                    />
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
+
+          <v-row>
+            <v-col cols="12" md="7">
+              <v-card variant="outlined">
+                <v-card-title class="text-subtitle-1">Live adjustments</v-card-title>
+                <v-card-text>
+                  <div class="preset-row mb-4">
+                    <v-select
+                      v-model="selectedFilterPreset"
+                      :items="presetItems"
+                      label="Filter preset"
+                      density="compact"
+                      style="max-width: 240px"
+                      @update:model-value="applyFilterPreset"
+                    />
+                    <div class="preset-buttons">
+                      <v-btn variant="tonal" @click="applyFilterPreset('default')">Default</v-btn>
+                      <v-btn variant="tonal" @click="applyFilterPreset('vintage')">Vintage</v-btn>
+                      <v-btn variant="tonal" @click="applyFilterPreset('bw')">B&W</v-btn>
+                    </div>
+                  </div>
+                  <div class="filter-preview mb-4">{{ operationsSummary }}</div>
+                  <div
+                    v-for="control in filterControls"
+                    :key="control.key"
+                    class="filter-control-row"
+                  >
+                    <div class="filter-control-header">
+                      <div>
+                        <span class="filter-label">{{ control.label }}</span>
+                        <span class="filter-value"
+                          >{{ operations[control.key] }}{{ control.unit }}</span
+                        >
+                      </div>
+                      <v-btn icon variant="tonal" size="small" @click="resetOperation(control.key)">
+                        <!-- <span class="material-icons">refresh</span> -->
+                        <v-icon icon="mdi-refresh"></v-icon>
+                      </v-btn>
+                    </div>
+                    <v-slider
+                      v-model="operations[control.key] as number"
+                      :min="control.min"
+                      :max="control.max"
+                      :step="control.step"
+                      thumb-label
+                      @update:model-value="markCustomPreset"
+                    />
+                  </div>
+                  <div class="mt-4">
+                    <v-btn variant="tonal" @click="triggerOperationsLoad">Load ops JSON</v-btn>
+                    <div class="text-body-2 mt-2">
+                      {{
+                        loadedOperationsFile
+                          ? `Loaded operations: ${loadedOperationsFile}`
+                          : 'No operations file loaded'
+                      }}
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
             </v-col>
 
             <v-col cols="12" md="5">
               <v-card variant="outlined">
-                <v-card-title class="text-subtitle-1">Live adjustments</v-card-title>
-                <v-card-text>
-                  <v-slider
-                    v-model="operations.brightness"
-                    label="Brightness"
-                    min="0"
-                    max="200"
-                    step="1"
-                  />
-                  <v-slider
-                    v-model="operations.contrast"
-                    label="Contrast"
-                    min="0"
-                    max="200"
-                    step="1"
-                  />
-                  <v-slider
-                    v-model="operations.saturation"
-                    label="Saturation"
-                    min="0"
-                    max="200"
-                    step="1"
-                  />
-                  <v-slider
-                    v-model="operations.grayscale"
-                    label="Grayscale"
-                    min="0"
-                    max="100"
-                    step="1"
-                  />
-                  <v-slider v-model="operations.sepia" label="Sepia" min="0" max="100" step="1" />
-                  <v-slider v-model="operations.blur" label="Blur" min="0" max="20" step="0.5" />
-                  <v-slider
-                    v-model="operations.hueRotate"
-                    label="Hue rotate"
-                    min="0"
-                    max="360"
-                    step="1"
-                  />
-                  <v-slider
-                    v-model="operations.opacity"
-                    label="Opacity"
-                    min="0"
-                    max="100"
-                    step="1"
-                  />
-                </v-card-text>
-              </v-card>
-
-              <v-card variant="outlined" class="mt-4">
                 <v-card-title class="text-subtitle-1">Preview</v-card-title>
                 <v-card-text>
                   <img
@@ -498,33 +609,47 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
                     class="preview-image"
                   />
                 </v-card-text>
+                <v-card-actions class="preview-actions flex-wrap gap-2">
+                  <v-btn variant="outlined" @click="rotateImage(90)">Rotate +90°</v-btn>
+                  <v-btn variant="outlined" @click="rotateImage(-90)">Rotate -90°</v-btn>
+                  <v-btn variant="outlined" @click="flipImage('x')">Flip X</v-btn>
+                  <v-btn variant="outlined" @click="flipImage('y')">Flip Y</v-btn>
+                  <v-btn variant="outlined" @click="undo" :disabled="!history.length">Undo</v-btn>
+                  <v-btn variant="outlined" @click="redo" :disabled="!future.length">Redo</v-btn>
+                  <v-btn variant="outlined" @click="resetEdits">Reset all</v-btn>
+                </v-card-actions>
               </v-card>
 
-              <div class="d-flex flex-wrap gap-2 mt-4">
-                <v-select
-                  v-model="exportFormat"
-                  :items="[
-                    { title: 'PNG', value: 'png' },
-                    { title: 'JPEG', value: 'jpeg' },
-                    { title: 'WebP', value: 'webp' },
-                  ]"
-                  label="Export format"
-                  density="compact"
-                  style="max-width: 180px"
-                />
-                <v-btn color="success" @click="exportImage">Export image</v-btn>
-                <v-btn variant="tonal" @click="downloadOperations">Export JSON</v-btn>
-              </div>
-
-              <v-slider
-                v-if="exportFormat !== 'png'"
-                v-model="exportQuality"
-                :label="`Quality ${Math.round(exportQuality * 100)}%`"
-                min="0.5"
-                max="1"
-                step="0.01"
-                style="max-width: 220px"
-              />
+              <v-card variant="outlined" class="mt-4">
+                <v-card-title class="text-subtitle-1">Output</v-card-title>
+                <v-card-text>
+                  <div class="d-flex flex-wrap gap-2">
+                    <v-select
+                      v-model="exportFormat"
+                      :items="[
+                        { title: 'PNG', value: 'png' },
+                        { title: 'JPEG', value: 'jpeg' },
+                        { title: 'WebP', value: 'webp' },
+                      ]"
+                      label="Export format"
+                      density="compact"
+                      style="max-width: 180px"
+                    />
+                    <v-btn color="success" @click="exportImage">Export image</v-btn>
+                    <v-btn variant="tonal" @click="downloadOperations">Export JSON</v-btn>
+                  </div>
+                  <v-slider
+                    v-if="exportFormat !== 'png'"
+                    v-model="exportQuality"
+                    :label="`Quality ${Math.round(exportQuality * 100)}%`"
+                    min="0.5"
+                    max="1"
+                    step="0.01"
+                    style="max-width: 220px"
+                    class="mt-4"
+                  />
+                </v-card-text>
+              </v-card>
             </v-col>
           </v-row>
         </div>
@@ -553,8 +678,8 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
 
 .preview-image {
   display: block;
-  width: 100%;
-  max-height: 420px;
+  max-width: 100%;
+  height: auto;
   object-fit: contain;
   background: #fff;
 }
@@ -583,6 +708,43 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
 .drop-active {
   border-color: #1976d2;
   background: rgba(25, 118, 210, 0.08);
+}
+
+.preset-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preview-actions {
+  justify-content: flex-start;
+  padding: 16px;
+  gap: 10px;
+}
+
+.filter-control-row {
+  /* margin-bottom: 18px; */
+}
+
+.filter-control-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  /* margin-bottom: 8px; */
+}
+
+.filter-label {
+  font-weight: 500;
+}
+
+.filter-value {
+  color: rgba(0, 0, 0, 0.6);
+  margin-left: 10px;
+}
+
+.filter-preview {
+  font-size: 0.95rem;
+  color: rgba(0, 0, 0, 0.75);
 }
 
 @media (max-width: 900px) {
@@ -614,9 +776,3 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
   }
 }
 </style>
-border-color: rgba(25, 118, 210, 0.6); } .drop-zone-label { margin-top: 10px; color: rgba(0, 0, 0,
-0.65); } .drop-active { border-color: #1976d2; background: rgba(25, 118, 210, 0.08); } @media
-(max-width: 900px) { .cropper-shell { min-height: 260px; } .drop-zone { padding: 14px; }
-.d-flex.flex-wrap { flex-direction: column; } .d-flex.flex-wrap .v-btn, .d-flex.flex-wrap .v-select
-{ width: 100%; } } @media (max-width: 600px) { .cropper-shell { min-height: 220px; } .preview-image
-{ max-height: 300px; } }

@@ -17,19 +17,19 @@ Plan for roughly a day. Get the requirements working first; the bonus section is
 
 ## Requirements
 
-- [ ] Load an image via file upload.
-- [ ] Crop uploaded image
-- [ ] Adjust it with live sliders with a real-time preview.
-  - [ ] brightness
-  - [ ] contrast
-  - [ ] saturation
-- [ ] Reset / view original: a way back to the unedited image. Edits must stay non-destructive — keep the original and derive the preview rather than writing changes into the source.
-- [ ] Export the result by downloading it.
+- ✅ Load an image via file upload.
+- ✅ Crop uploaded image
+- ✅ Adjust it with live sliders with a real-time preview.
+  - ✅ brightness
+  - ✅ contrast
+  - ✅ saturation
+- ✅ Reset / view original: a way back to the unedited image. Edits must stay non-destructive — keep the original and derive the preview rather than writing changes into the source.
+- ✅ Export the result by downloading it.
 
 ## ★ Bonus (optional)
 
-- [ ] Add at least one filter (greyscale, sepia, etc.).
-- [ ] Export the operations as JSON alongside the image. It should describe applied operations so that that replaying them on the original image reproduces the result. You design the shape; be ready to explain it.
+- ✅ Add at least one filter (greyscale, sepia, etc.).
+- ✅ Export the operations as JSON alongside the image. It should describe applied operations so that that replaying them on the original image reproduces the result. You design the shape; be ready to explain it.
 
 ## Constraints & notes
 

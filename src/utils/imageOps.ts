@@ -150,6 +150,66 @@ export const serializeOperations = (operations: ImageOperations, originalName: s
   },
 })
 
+export const deserializeOperations = (value: unknown): ImageOperations | null => {
+  if (!value || typeof value !== 'object' || !('operations' in value)) {
+    return null
+  }
+
+  const parsed = (value as { operations?: unknown }).operations
+  if (!parsed || typeof parsed !== 'object') {
+    return null
+  }
+
+  const defaults = defaultOperations()
+  return {
+    ...defaults,
+    ...parsed,
+  } as ImageOperations
+}
+
+export const filterPresets: Record<string, Partial<ImageOperations>> = {
+  default: {
+    brightness: 100,
+    contrast: 100,
+    saturation: 100,
+    grayscale: 0,
+    sepia: 0,
+    blur: 0,
+    hueRotate: 0,
+    opacity: 100,
+  },
+  vintage: {
+    brightness: 110,
+    contrast: 120,
+    saturation: 120,
+    grayscale: 0,
+    sepia: 30,
+    blur: 0.5,
+    hueRotate: 10,
+    opacity: 100,
+  },
+  bw: {
+    brightness: 100,
+    contrast: 130,
+    saturation: 0,
+    grayscale: 100,
+    sepia: 0,
+    blur: 0,
+    hueRotate: 0,
+    opacity: 100,
+  },
+  warm: {
+    brightness: 115,
+    contrast: 105,
+    saturation: 120,
+    grayscale: 0,
+    sepia: 12,
+    blur: 0,
+    hueRotate: 15,
+    opacity: 100,
+  },
+}
+
 export const getExportMimeType = (format: 'png' | 'jpeg' | 'webp') => {
   switch (format) {
     case 'jpeg':
