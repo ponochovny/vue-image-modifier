@@ -1,11 +1,7 @@
 <script setup lang="ts">
-import FileUploader from './components/FileUploader.vue'
+import ImageEditor from './components/ImageEditor.vue'
 </script>
 
 <template>
-  <h1>Image modifier</h1>
-  <p>You can upload, crop, change the size, and apply filters to your images.</p>
-  <FileUploader />
+  <ImageEditor />
 </template>
-
-<style scoped></style>
