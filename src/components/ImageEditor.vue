@@ -47,10 +47,6 @@ const selectedFilterPreset = ref<string>('default')
 const loadedOperationsFile = ref<string | null>(null)
 const VueCropper = resolveVueCropperComponent(VueCropperRaw)
 
-const previewStyle = computed(() => ({
-  filter: buildFilterString(operations.value),
-}))
-
 const filterControls: Array<{
   key: Exclude<keyof ImageOperations, 'rotate' | 'scaleX' | 'scaleY' | 'crop'>
   label: string
@@ -189,6 +185,51 @@ const redo = () => {
   renderPreview()
 }
 
+const renderImageToCanvas = (image: HTMLImageElement) => {
+  const canvas = document.createElement('canvas')
+  const crop = operations.value.crop
+  const rotate = operations.value.rotate
+  const scaleX = operations.value.scaleX
+  const scaleY = operations.value.scaleY
+
+  const sourceWidth = image.naturalWidth
+  const sourceHeight = image.naturalHeight
+  const targetWidth = crop?.width ?? sourceWidth
+  const targetHeight = crop?.height ?? sourceHeight
+
+  const radians = (rotate * Math.PI) / 180
+  const rotatedWidth =
+    Math.abs(Math.cos(radians) * targetWidth) + Math.abs(Math.sin(radians) * targetHeight)
+  const rotatedHeight =
+    Math.abs(Math.sin(radians) * targetWidth) + Math.abs(Math.cos(radians) * targetHeight)
+
+  canvas.width = Math.ceil(rotatedWidth)
+  canvas.height = Math.ceil(rotatedHeight)
+  const ctx = canvas.getContext('2d')
+
+  if (!ctx) {
+    return null
+  }
+
+  ctx.translate(canvas.width / 2, canvas.height / 2)
+  ctx.scale(scaleX, scaleY)
+  ctx.rotate(radians)
+  ctx.filter = buildFilterString(operations.value)
+  ctx.drawImage(
+    image,
+    crop?.x ?? 0,
+    crop?.y ?? 0,
+    crop?.width ?? sourceWidth,
+    crop?.height ?? sourceHeight,
+    -targetWidth / 2,
+    -targetHeight / 2,
+    targetWidth,
+    targetHeight,
+  )
+
+  return canvas
+}
+
 const renderPreview = () => {
   if (!originalImageUrl.value) {
     return
@@ -196,46 +237,11 @@ const renderPreview = () => {
 
   const image = new Image()
   image.onload = () => {
-    const canvas = document.createElement('canvas')
-    const crop = operations.value.crop
-    const rotate = operations.value.rotate
-    const scaleX = operations.value.scaleX
-    const scaleY = operations.value.scaleY
+    const canvas = renderImageToCanvas(image)
 
-    const sourceWidth = image.naturalWidth
-    const sourceHeight = image.naturalHeight
-    const targetWidth = crop?.width ?? sourceWidth
-    const targetHeight = crop?.height ?? sourceHeight
-
-    const radians = (rotate * Math.PI) / 180
-    const rotatedWidth =
-      Math.abs(Math.cos(radians) * targetWidth) + Math.abs(Math.sin(radians) * targetHeight)
-    const rotatedHeight =
-      Math.abs(Math.sin(radians) * targetWidth) + Math.abs(Math.cos(radians) * targetHeight)
-
-    canvas.width = Math.ceil(rotatedWidth)
-    canvas.height = Math.ceil(rotatedHeight)
-    const ctx = canvas.getContext('2d')
-
-    if (!ctx) {
+    if (!canvas) {
       return
     }
-
-    ctx.translate(canvas.width / 2, canvas.height / 2)
-    ctx.scale(scaleX, scaleY)
-    ctx.rotate(radians)
-    ctx.filter = buildFilterString(operations.value)
-    ctx.drawImage(
-      image,
-      crop?.x ?? 0,
-      crop?.y ?? 0,
-      crop?.width ?? sourceWidth,
-      crop?.height ?? sourceHeight,
-      -targetWidth / 2,
-      -targetHeight / 2,
-      targetWidth,
-      targetHeight,
-    )
 
     previewImageUrl.value = canvas.toDataURL(getExportMimeType(exportFormat.value).mimeType)
   }
@@ -354,22 +360,17 @@ const resetEdits = () => {
 }
 
 const exportImage = () => {
-  if (!previewImageUrl.value) {
+  if (!originalImageUrl.value) {
     return
   }
 
   const image = new Image()
   image.onload = () => {
-    const canvas = document.createElement('canvas')
-    canvas.width = image.naturalWidth
-    canvas.height = image.naturalHeight
-    const ctx = canvas.getContext('2d')
+    const canvas = renderImageToCanvas(image)
 
-    if (!ctx) {
+    if (!canvas) {
       return
     }
-
-    ctx.drawImage(image, 0, 0)
 
     const { mimeType, extension } = getExportMimeType(exportFormat.value)
     canvas.toBlob(
@@ -390,7 +391,7 @@ const exportImage = () => {
     )
   }
 
-  image.src = previewImageUrl.value
+  image.src = originalImageUrl.value
 }
 
 const downloadOperations = () => {
@@ -498,7 +499,7 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
 
         <div v-if="isLoaded" class="mt-6">
           <v-row>
-            <v-col cols="12" md="7">
+            <v-col cols="12" md="12">
               <div class="cropper-shell">
                 <vue-cropper
                   v-if="originalImageUrl"
@@ -537,7 +538,7 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
           </v-row>
 
           <v-row>
-            <v-col cols="12" md="7">
+            <v-col cols="12" sm="6">
               <v-card variant="outlined">
                 <v-card-title class="text-subtitle-1">Live adjustments</v-card-title>
                 <v-card-text>
@@ -550,7 +551,7 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
                       style="max-width: 240px"
                       @update:model-value="applyFilterPreset"
                     />
-                    <div class="preset-buttons">
+                    <div class="d-flex flex-wrap ga-2">
                       <v-btn variant="tonal" @click="applyFilterPreset('default')">Default</v-btn>
                       <v-btn variant="tonal" @click="applyFilterPreset('vintage')">Vintage</v-btn>
                       <v-btn variant="tonal" @click="applyFilterPreset('bw')">B&W</v-btn>
@@ -597,14 +598,13 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
               </v-card>
             </v-col>
 
-            <v-col cols="12" md="5">
+            <v-col cols="12" sm="6">
               <v-card variant="outlined">
                 <v-card-title class="text-subtitle-1">Preview</v-card-title>
                 <v-card-text>
                   <img
                     v-if="previewImageUrl"
                     :src="previewImageUrl"
-                    :style="previewStyle"
                     alt="Edited preview"
                     class="preview-image"
                   />
@@ -708,12 +708,6 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
 .drop-active {
   border-color: #1976d2;
   background: rgba(25, 118, 210, 0.08);
-}
-
-.preset-buttons {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .preview-actions {
