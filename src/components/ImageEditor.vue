@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import { resolveVueCropperComponent } from '../utils/vueCropperCompat'
 import VueCropperRaw from 'vue-cropperjs'
 import 'cropperjs/dist/cropper.css'
+import { useEditorStore } from '../stores/editor'
 import {
   cloneOperations,
   defaultOperations,
@@ -23,15 +24,15 @@ type CropperRef = {
   scaleX: (scaleX: number) => void
   scaleY: (scaleY: number) => void
   setAspectRatio: (value: number | null) => void
+  setData: (data: { x: number; y: number; width: number; height: number }) => void
 }
 
+const editor = useEditorStore()
 const selectedFiles = ref<File[]>([])
 const originalImageUrl = ref<string | null>(null)
 const originalFileName = ref('image.png')
 const previewImageUrl = ref<string | null>(null)
-const operations = ref<ImageOperations>(defaultOperations())
-const history = ref<ImageOperations[]>([])
-const future = ref<ImageOperations[]>([])
+const operations = toRef(editor, 'operations')
 const isLoaded = ref(false)
 const cropperRef = ref<CropperRef | null>(null)
 const exportFormat = ref<'png' | 'jpeg' | 'webp'>('png')
@@ -46,6 +47,9 @@ let statusTimer: number | null = null
 const selectedFilterPreset = ref<string>('default')
 const loadedOperationsFile = ref<string | null>(null)
 const VueCropper = resolveVueCropperComponent(VueCropperRaw)
+const sourceImage = ref<HTMLImageElement | null>(null)
+let renderFrame: number | null = null
+let sliderSnapshot: ImageOperations | null = null
 
 const filterControls: Array<{
   key: Exclude<keyof ImageOperations, 'rotate' | 'scaleX' | 'scaleY' | 'crop'>
@@ -78,7 +82,7 @@ const filterKeys: Array<Exclude<keyof ImageOperations, 'rotate' | 'scaleX' | 'sc
 
 const operationsSummary = computed(() => {
   const op = operations.value
-  return `B ${op.brightness}% · C ${op.contrast}% · S ${op.saturation}% · G ${op.grayscale}% · Sepia ${op.sepia}% · Blur ${op.blur}px · Hue ${op.hueRotate}° · Opacity ${op.opacity}%`
+  return `B ${op.brightness}% · C ${op.contrast}% · S ${op.saturation}% · G ${op.grayscale}% · Sepia ${op.sepia}% · Blur ${op.blur}px · Hue ${op.hueRotate}° · Opacity ${op.opacity}% · Rotate ${op.rotate}° · Flip ${op.scaleX < 0 ? 'X' : ''}${op.scaleY < 0 ? 'Y' : ''}`
 })
 
 const presetItems = computed(() => [
@@ -101,10 +105,6 @@ const setStatus = (message: string, type: 'success' | 'error' | 'info' = 'info')
   }, 3200)
 }
 
-const markCustomPreset = () => {
-  selectedFilterPreset.value = 'custom'
-}
-
 const resetOperation = (key: keyof ImageOperations) => {
   const defaults = defaultOperations()
   commitOperation((current) => {
@@ -115,7 +115,7 @@ const resetOperation = (key: keyof ImageOperations) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(current as any)[k] = (defaults as any)[k]
     }
-  }, false)
+  })
   setStatus(`Reset ${key} to default`, 'info')
 }
 
@@ -128,69 +128,44 @@ const applyFilterPreset = (presetName: string) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(current as any)[k] = (preset as any)[k] ?? (defaults as any)[k]
     })
-  }, false)
+  })
   selectedFilterPreset.value = presetName
   setStatus(`Applied ${presetName} preset`, 'success')
 }
 
-const pushHistory = () => {
-  history.value = [...history.value, cloneOperations(operations.value)]
-  if (history.value.length > 20) {
-    history.value = history.value.slice(-20)
+const schedulePreview = () => {
+  if (renderFrame !== null) {
+    window.cancelAnimationFrame(renderFrame)
   }
+  renderFrame = window.requestAnimationFrame(() => {
+    renderFrame = null
+    renderPreview()
+  })
 }
 
-const commitOperation = (updater: (current: ImageOperations) => void, shouldResetFuture = true) => {
-  if (!operations.value) {
-    return
-  }
-
-  pushHistory()
-  updater(operations.value)
-  if (shouldResetFuture) {
-    future.value = []
-  }
+const commitOperation = (updater: (current: ImageOperations) => void) => {
+  const nextOperations = cloneOperations(operations.value)
+  updater(nextOperations)
+  editor.replace(nextOperations)
   renderPreview()
 }
 
 const undo = () => {
-  if (!history.value.length) {
-    return
-  }
-
-  const previous = history.value[history.value.length - 1]
-  if (!previous) {
-    return
-  }
-
-  future.value = [cloneOperations(operations.value), ...future.value]
-  history.value = history.value.slice(0, -1)
-  operations.value = cloneOperations(previous)
+  editor.undo()
   renderPreview()
 }
 
 const redo = () => {
-  if (!future.value.length) {
-    return
-  }
-
-  const next = future.value[0]
-  if (!next) {
-    return
-  }
-
-  history.value = [...history.value, cloneOperations(operations.value)]
-  future.value = future.value.slice(1)
-  operations.value = cloneOperations(next)
+  editor.redo()
   renderPreview()
 }
 
-const renderImageToCanvas = (image: HTMLImageElement) => {
+const renderImageToCanvas = (image: HTMLImageElement, currentOperations: ImageOperations) => {
   const canvas = document.createElement('canvas')
-  const crop = operations.value.crop
-  const rotate = operations.value.rotate
-  const scaleX = operations.value.scaleX
-  const scaleY = operations.value.scaleY
+  const crop = currentOperations.crop
+  const rotate = currentOperations.rotate
+  const scaleX = currentOperations.scaleX
+  const scaleY = currentOperations.scaleY
 
   const sourceWidth = image.naturalWidth
   const sourceHeight = image.naturalHeight
@@ -214,7 +189,7 @@ const renderImageToCanvas = (image: HTMLImageElement) => {
   ctx.translate(canvas.width / 2, canvas.height / 2)
   ctx.scale(scaleX, scaleY)
   ctx.rotate(radians)
-  ctx.filter = buildFilterString(operations.value)
+  ctx.filter = buildFilterString(currentOperations)
   ctx.drawImage(
     image,
     crop?.x ?? 0,
@@ -235,17 +210,22 @@ const renderPreview = () => {
     return
   }
 
-  const image = new Image()
-  image.onload = () => {
-    const canvas = renderImageToCanvas(image)
-
-    if (!canvas) {
-      return
-    }
-
-    previewImageUrl.value = canvas.toDataURL(getExportMimeType(exportFormat.value).mimeType)
+  const render = (image: HTMLImageElement) => {
+    const canvas = renderImageToCanvas(image, cloneOperations(operations.value))
+    if (canvas) previewImageUrl.value = canvas.toDataURL('image/png')
   }
 
+  if (sourceImage.value?.complete && sourceImage.value.naturalWidth > 0) {
+    render(sourceImage.value)
+    return
+  }
+
+  const image = new Image()
+  image.onload = () => {
+    sourceImage.value = image
+    render(image)
+  }
+  image.onerror = () => setStatus('Could not load this image', 'error')
   image.src = originalImageUrl.value
 }
 
@@ -257,10 +237,17 @@ const refreshCropper = () => {
   nextTick(() => {
     cropperRef.value?.replace?.(originalImageUrl.value as string)
     cropperRef.value?.reset?.()
+    if (operations.value.crop) {
+      cropperRef.value?.setData?.(operations.value.crop)
+    }
   })
 }
 
 const loadFile = (file: File) => {
+  if (!file.type.startsWith('image/')) {
+    setStatus('Please choose an image file', 'error')
+    return
+  }
   if (originalImageUrl.value) {
     URL.revokeObjectURL(originalImageUrl.value)
   }
@@ -268,22 +255,18 @@ const loadFile = (file: File) => {
   selectedFiles.value = [file]
   originalFileName.value = file.name
   originalImageUrl.value = URL.createObjectURL(file)
-  operations.value = defaultOperations()
-  history.value = []
-  future.value = []
+  editor.clear()
   previewImageUrl.value = null
   isLoaded.value = true
 
+  sourceImage.value = null
   refreshCropper()
+  schedulePreview()
 }
 
-const handleFileChange = (event: Event) => {
-  const target = event.target as HTMLInputElement
-  const file = target.files?.[0]
-
-  if (file) {
-    loadFile(file)
-  }
+const handleFileChange = (files: File[] | File | null) => {
+  const file = Array.isArray(files) ? files[0] : files
+  if (file) loadFile(file)
 }
 
 const handleDrop = (event: DragEvent) => {
@@ -353,9 +336,8 @@ const setAspectRatioPreset = (value: number | null) => {
 }
 
 const resetEdits = () => {
-  commitOperation((current) => {
-    Object.assign(current, defaultOperations())
-  }, false)
+  editor.reset()
+  renderPreview()
   cropperRef.value?.reset()
 }
 
@@ -366,7 +348,7 @@ const exportImage = () => {
 
   const image = new Image()
   image.onload = () => {
-    const canvas = renderImageToCanvas(image)
+    const canvas = renderImageToCanvas(image, cloneOperations(operations.value))
 
     if (!canvas) {
       return
@@ -423,10 +405,11 @@ const applyOperationsFromJson = async (event: Event) => {
     const parsed = JSON.parse(text)
     const loaded = deserializeOperations(parsed)
     if (loaded) {
-      operations.value = loaded
       loadedOperationsFile.value = file.name
       selectedFilterPreset.value = 'custom'
-      renderPreview()
+      editor.replace(loaded)
+      refreshCropper()
+      schedulePreview()
       setStatus(`Loaded operations from ${file.name}`, 'success')
       return
     }
@@ -437,14 +420,6 @@ const applyOperationsFromJson = async (event: Event) => {
   }
 }
 
-watch(
-  [originalImageUrl, operations, exportFormat],
-  () => {
-    renderPreview()
-  },
-  { deep: true },
-)
-
 watch(originalImageUrl, (newUrl, oldUrl) => {
   if (!newUrl || newUrl === oldUrl) {
     return
@@ -452,16 +427,44 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
 
   refreshCropper()
 })
+
+const updateFilter = (
+  key: Exclude<keyof ImageOperations, 'rotate' | 'scaleX' | 'scaleY' | 'crop'>,
+  value: number,
+) => {
+  if (!sliderSnapshot) sliderSnapshot = cloneOperations(operations.value)
+  operations.value[key] = Number(value)
+  selectedFilterPreset.value = 'custom'
+  schedulePreview()
+}
+
+const finishFilter = () => {
+  if (sliderSnapshot) {
+    editor.commitSnapshot(sliderSnapshot)
+    sliderSnapshot = null
+  }
+}
+
+onBeforeUnmount(() => {
+  if (originalImageUrl.value) URL.revokeObjectURL(originalImageUrl.value)
+  if (renderFrame !== null) window.cancelAnimationFrame(renderFrame)
+  if (statusTimer !== null) window.clearTimeout(statusTimer)
+})
 </script>
 
 <template>
-  <v-container class="pa-6">
-    <v-card class="mx-auto" max-width="1100">
-      <v-card-title class="text-h5">Image editor</v-card-title>
+  <v-container class="editor-page pa-4 pa-md-8">
+    <v-card class="editor-frame mx-auto" max-width="1400">
+      <v-card-title class="editor-heading">
+        <div>
+          <div class="text-overline">PRINT / IMAGE LAB</div>
+          <div class="text-h4">Image editor</div>
+        </div>
+        <div class="editor-badge">NON-DESTRUCTIVE</div>
+      </v-card-title>
       <v-card-text>
-        <p class="mb-4">
-          Upload an image, crop it with the built-in cropper, adjust brightness/contrast/saturation,
-          and export the result.
+        <p class="editor-intro mb-5">
+          Prepare a clean, print-ready image while keeping the original untouched.
         </p>
         <v-snackbar v-model="snackbarVisible" :type="statusType" location="top">
           {{ statusMessage }}
@@ -479,14 +482,13 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
             label="Choose image"
             prepend-icon="mdi-image"
             show-size
-            @change="handleFileChange"
+            @update:model-value="handleFileChange"
           />
           <div class="drop-zone-label">Drag and drop an image here or click to choose a file</div>
         </div>
 
-        <v-alert type="info" variant="tonal" class="mt-4 mb-0">
-          These edits are applied to the preview and export only. The original image stays
-          unchanged.
+        <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-0">
+          Preview and export use the same operation pipeline. Your source file is never changed.
         </v-alert>
 
         <input
@@ -498,8 +500,8 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
         />
 
         <div v-if="isLoaded" class="mt-6">
-          <v-row>
-            <v-col cols="12" md="12">
+          <v-row class="top-workspace align-start">
+            <v-col cols="12" md="7" class="workspace-column">
               <div class="cropper-shell">
                 <vue-cropper
                   v-if="originalImageUrl"
@@ -535,10 +537,66 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
                 </v-card-text>
               </v-card>
             </v-col>
+            <v-col cols="12" md="5" class="workspace-column">
+              <v-card class="preview-panel" variant="flat">
+                <v-card-title class="panel-title">Result</v-card-title>
+                <v-card-text class="preview-stage">
+                  <img
+                    v-if="previewImageUrl"
+                    :src="previewImageUrl"
+                    alt="Edited preview"
+                    class="preview-image"
+                  />
+                  <div v-else class="preview-empty">Rendering preview...</div>
+                </v-card-text>
+                <v-card-actions class="preview-actions flex-wrap">
+                  <v-btn
+                    icon="mdi-rotate-right"
+                    variant="tonal"
+                    title="Rotate right"
+                    @click="rotateImage(90)"
+                  />
+                  <v-btn
+                    icon="mdi-rotate-left"
+                    variant="tonal"
+                    title="Rotate left"
+                    @click="rotateImage(-90)"
+                  />
+                  <v-btn
+                    icon="mdi-flip-horizontal"
+                    variant="tonal"
+                    title="Flip horizontally"
+                    @click="flipImage('x')"
+                  />
+                  <v-btn
+                    icon="mdi-flip-vertical"
+                    variant="tonal"
+                    title="Flip vertically"
+                    @click="flipImage('y')"
+                  />
+                  <v-divider vertical class="mx-1" />
+                  <v-btn
+                    icon="mdi-undo"
+                    variant="text"
+                    title="Undo"
+                    :disabled="!editor.canUndo"
+                    @click="undo"
+                  />
+                  <v-btn
+                    icon="mdi-redo"
+                    variant="text"
+                    title="Redo"
+                    :disabled="!editor.canRedo"
+                    @click="redo"
+                  />
+                  <v-btn variant="text" @click="resetEdits">Reset</v-btn>
+                </v-card-actions>
+              </v-card>
+            </v-col>
           </v-row>
 
           <v-row>
-            <v-col cols="12" sm="6">
+            <v-col cols="12" md="7" class="workspace-column">
               <v-card variant="outlined">
                 <v-card-title class="text-subtitle-1">Live adjustments</v-card-title>
                 <v-card-text>
@@ -576,12 +634,13 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
                       </v-btn>
                     </div>
                     <v-slider
-                      v-model="operations[control.key] as number"
+                      :model-value="operations[control.key]"
                       :min="control.min"
                       :max="control.max"
                       :step="control.step"
                       thumb-label
-                      @update:model-value="markCustomPreset"
+                      @update:model-value="updateFilter(control.key, $event)"
+                      @end="finishFilter"
                     />
                   </div>
                   <div class="mt-4">
@@ -598,30 +657,9 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
               </v-card>
             </v-col>
 
-            <v-col cols="12" sm="6">
-              <v-card variant="outlined">
-                <v-card-title class="text-subtitle-1">Preview</v-card-title>
-                <v-card-text>
-                  <img
-                    v-if="previewImageUrl"
-                    :src="previewImageUrl"
-                    alt="Edited preview"
-                    class="preview-image"
-                  />
-                </v-card-text>
-                <v-card-actions class="preview-actions flex-wrap gap-2">
-                  <v-btn variant="outlined" @click="rotateImage(90)">Rotate +90°</v-btn>
-                  <v-btn variant="outlined" @click="rotateImage(-90)">Rotate -90°</v-btn>
-                  <v-btn variant="outlined" @click="flipImage('x')">Flip X</v-btn>
-                  <v-btn variant="outlined" @click="flipImage('y')">Flip Y</v-btn>
-                  <v-btn variant="outlined" @click="undo" :disabled="!history.length">Undo</v-btn>
-                  <v-btn variant="outlined" @click="redo" :disabled="!future.length">Redo</v-btn>
-                  <v-btn variant="outlined" @click="resetEdits">Reset all</v-btn>
-                </v-card-actions>
-              </v-card>
-
+            <v-col cols="12" md="5" class="workspace-column">
               <v-card variant="outlined" class="mt-4">
-                <v-card-title class="text-subtitle-1">Output</v-card-title>
+                <v-card-title class="panel-title">Export</v-card-title>
                 <v-card-text>
                   <div class="d-flex flex-wrap gap-2">
                     <v-select
@@ -661,10 +699,19 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
 <style scoped>
 .cropper-shell {
   position: relative;
-  background: #f5f5f5;
-  border-radius: 8px;
+  background: #e9edf0;
+  border: 1px solid #d5dce0;
+  border-radius: 4px;
   overflow: hidden;
   min-height: 320px;
+}
+
+.workspace-column {
+  align-self: flex-start;
+}
+
+.top-workspace {
+  align-items: flex-start;
 }
 
 :deep(.cropper-container) {
@@ -679,14 +726,73 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
 .preview-image {
   display: block;
   max-width: 100%;
+  max-height: 430px;
   height: auto;
+  margin: auto;
   object-fit: contain;
-  background: #fff;
+  background: #ffffff;
+}
+
+.editor-page {
+  min-height: 100vh;
+  background: #e8eceb;
+}
+
+.editor-frame {
+  overflow: hidden;
+  border: 1px solid #ccd5d5;
+  border-radius: 6px;
+  background: #f8faf9;
+}
+
+.editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 26px 28px 10px;
+}
+
+.editor-intro {
+  color: #52605f;
+}
+
+.editor-badge {
+  padding: 6px 10px;
+  border: 1px solid #7d9990;
+  border-radius: 3px;
+  color: #42675e;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.panel-title {
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.preview-panel {
+  border: 1px solid #ccd5d5;
+  background: #202827;
+  color: #f5f7f5;
+}
+
+.preview-stage {
+  display: flex;
+  min-height: 320px;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: repeating-conic-gradient(#f7f8f6 0% 25%, #e5e9e6 0% 50%) 50% / 20px 20px;
+}
+
+.preview-empty {
+  color: #52605f;
 }
 
 .drop-zone {
   border: 2px dashed rgba(0, 0, 0, 0.16);
-  border-radius: 16px;
+  border-radius: 4px;
   padding: 18px;
   transition:
     border-color 0.2s ease,
@@ -748,6 +854,14 @@ watch(originalImageUrl, (newUrl, oldUrl) => {
 
   .drop-zone {
     padding: 14px;
+  }
+
+  .editor-heading {
+    padding: 20px 18px 8px;
+  }
+
+  .preview-stage {
+    min-height: 240px;
   }
 
   .d-flex.flex-wrap {

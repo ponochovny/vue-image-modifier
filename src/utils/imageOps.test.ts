@@ -4,6 +4,8 @@ import {
   clipSelectionToDisplayRect,
   defaultOperations,
   getExportMimeType,
+  getOperationPipeline,
+  deserializeOperations,
   getImageDisplayRect,
   mapSelectionToImageCoordinates,
   serializeOperations,
@@ -66,6 +68,26 @@ describe('image operations', () => {
     expect(payload.operations.rotate).toBe(0)
     expect(payload.operations.blur).toBe(0)
     expect(payload.operations.opacity).toBe(100)
+    expect(payload.pipeline.map((step) => step.type)).toEqual(['transform', 'filter'])
+  })
+
+  it('rejects malformed operation imports instead of merging arbitrary values', () => {
+    expect(deserializeOperations({ operations: { brightness: 'fast' } })).toBeNull()
+    expect(
+      deserializeOperations({
+        operations: { ...defaultOperations(), crop: { x: -1, y: 0, width: 10, height: 10 } },
+      }),
+    ).toBeNull()
+  })
+
+  it('keeps crop before transforms and filters in the replay pipeline', () => {
+    const operations = defaultOperations()
+    operations.crop = { x: 4, y: 6, width: 80, height: 60 }
+    expect(getOperationPipeline(operations).map((step) => step.type)).toEqual([
+      'crop',
+      'transform',
+      'filter',
+    ])
   })
 
   it('maps export formats to browser-safe mime types', () => {

@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@mdi/font": "^7.4.47",
+    "cropperjs": "^1.6.3",
     "jsdom": "^29.1.1",
     "pinia": "^3.0.4",
     "vitest": "^4.1.9",

@@ -24,22 +24,38 @@ npm run dev
 
 ### Requirements
 
-- ✅ Load an image via file upload.
-- ✅ Crop uploaded image.
-- ✅ Adjust it with live sliders with a real-time preview.
-  - ✅ brightness
-  - ✅ contrast
-  - ✅ saturation
-- ✅ Reset / view original without destructive edits.
-- ✅ Export the result by downloading it.
+# Image Lab
 
-### Bonus
+A non-destructive image editor for print-oriented preparation. It keeps the uploaded file as the source of truth and derives both the preview and downloaded image from the same operation pipeline.
 
-- ✅ Added multiple extra filters: grayscale, sepia, blur, hue rotate and opacity.
-- ✅ Exported the operations as JSON so the effect can be replayed on the original image.
+## Run locally
 
-### Additional features
+```bash
+npm install
+npm run dev
+```
 
-- ✅ Undo / redo history for edits.
-- ✅ Rotate, flip and aspect-ratio presets for cropping.
-- ✅ Filter presets, status feedback and export format/quality controls.
+Useful checks:
+
+```bash
+npm run type-check
+npm test
+npm run build
+```
+
+## Architecture
+
+- `src/stores/editor.ts` owns the editable operation snapshot plus undo/redo history. The UI does not implement history itself.
+- `src/utils/imageOps.ts` contains the serializable operation model, validation, filter generation, export formats, and the explicit replay order: crop, transform, then filters.
+- `ImageEditor.vue` owns browser concerns only: file/object URL lifecycle, cropper integration, canvas rendering, and download actions.
+- Preview updates are scheduled with `requestAnimationFrame` and reuse one decoded source image. Slider movement remains live without decoding a 4K image for every reactive tick.
+
+## Trade-offs
+
+Canvas rendering is intentionally used instead of CSS filters on the preview image. This keeps preview and export pixel-identical and avoids applying the same filter twice. The source image remains untouched, while the current flattened operation snapshot is exported as JSON together with an explicit pipeline description for replay.
+
+The cropper remains an interaction surface for selecting a crop, but the applied crop is stored in the operation snapshot. Importing an operations file therefore updates both the canvas pipeline and the cropper selection.
+
+## Features
+
+Image upload and drag-and-drop, crop with aspect ratios and zoom, brightness/contrast/saturation, grayscale, sepia, blur, hue rotation, opacity, rotate, flip, presets, undo/redo, PNG/JPEG/WebP export, and JSON operation export/import.

@@ -27,6 +27,54 @@ export type ImageOperations = {
   crop: ImageCrop | null
 }
 
+export type ImageOperation =
+  | { type: 'crop'; value: ImageCrop }
+  | { type: 'transform'; rotate: number; scaleX: number; scaleY: number }
+  | {
+      type: 'filter'
+      values: Pick<
+        ImageOperations,
+        | 'brightness'
+        | 'contrast'
+        | 'saturation'
+        | 'grayscale'
+        | 'sepia'
+        | 'blur'
+        | 'hueRotate'
+        | 'opacity'
+      >
+    }
+
+export const getOperationPipeline = (operations: ImageOperations): ImageOperation[] => {
+  const pipeline: ImageOperation[] = []
+
+  if (operations.crop) {
+    pipeline.push({ type: 'crop', value: { ...operations.crop } })
+  }
+
+  pipeline.push({
+    type: 'transform',
+    rotate: operations.rotate,
+    scaleX: operations.scaleX,
+    scaleY: operations.scaleY,
+  })
+  pipeline.push({
+    type: 'filter',
+    values: {
+      brightness: operations.brightness,
+      contrast: operations.contrast,
+      saturation: operations.saturation,
+      grayscale: operations.grayscale,
+      sepia: operations.sepia,
+      blur: operations.blur,
+      hueRotate: operations.hueRotate,
+      opacity: operations.opacity,
+    },
+  })
+
+  return pipeline
+}
+
 export const defaultOperations = (): ImageOperations => ({
   brightness: 100,
   contrast: 100,
@@ -134,6 +182,7 @@ export const mapSelectionToImageCoordinates = (
 export const serializeOperations = (operations: ImageOperations, originalName: string) => ({
   version: 3,
   originalName,
+  pipeline: getOperationPipeline(operations),
   operations: {
     brightness: operations.brightness,
     contrast: operations.contrast,
@@ -160,11 +209,79 @@ export const deserializeOperations = (value: unknown): ImageOperations | null =>
     return null
   }
 
+  const candidate = parsed as Record<string, unknown>
   const defaults = defaultOperations()
-  return {
-    ...defaults,
-    ...parsed,
-  } as ImageOperations
+  const numericKeys: Array<Exclude<keyof ImageOperations, 'crop'>> = [
+    'brightness',
+    'contrast',
+    'saturation',
+    'grayscale',
+    'sepia',
+    'blur',
+    'hueRotate',
+    'opacity',
+    'rotate',
+    'scaleX',
+    'scaleY',
+  ]
+  const ranges: Record<string, [number, number]> = {
+    brightness: [0, 200],
+    contrast: [0, 200],
+    saturation: [0, 200],
+    grayscale: [0, 100],
+    sepia: [0, 100],
+    blur: [0, 20],
+    hueRotate: [0, 360],
+    opacity: [0, 100],
+    rotate: [-360, 360],
+    scaleX: [-1, 1],
+    scaleY: [-1, 1],
+  }
+
+  const result = { ...defaults }
+  for (const key of numericKeys) {
+    const value = candidate[key]
+    const range = ranges[key]
+    if (!range) {
+      return null
+    }
+    if (
+      typeof value !== 'number' ||
+      !Number.isFinite(value) ||
+      value < range[0] ||
+      value > range[1]
+    ) {
+      return null
+    }
+    result[key] = value
+  }
+
+  const crop = candidate.crop
+  if (crop !== null && crop !== undefined) {
+    if (!crop || typeof crop !== 'object') {
+      return null
+    }
+    const cropValue = crop as Record<string, unknown>
+    if (
+      !['x', 'y', 'width', 'height'].every(
+        (key) => typeof cropValue[key] === 'number' && Number.isFinite(cropValue[key]),
+      ) ||
+      Number(cropValue.width) <= 0 ||
+      Number(cropValue.height) <= 0 ||
+      Number(cropValue.x) < 0 ||
+      Number(cropValue.y) < 0
+    ) {
+      return null
+    }
+    result.crop = {
+      x: Number(cropValue.x),
+      y: Number(cropValue.y),
+      width: Number(cropValue.width),
+      height: Number(cropValue.height),
+    }
+  }
+
+  return result
 }
 
 export const filterPresets: Record<string, Partial<ImageOperations>> = {
