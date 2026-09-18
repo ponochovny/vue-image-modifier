@@ -28,7 +28,7 @@ type CropperRef = {
 }
 
 const editor = useEditorStore()
-const selectedFiles = ref<File[]>([])
+const imageInput = ref<HTMLInputElement | null>(null)
 const originalImageUrl = ref<string | null>(null)
 const originalFileName = ref('image.png')
 const previewImageUrl = ref<string | null>(null)
@@ -252,7 +252,6 @@ const loadFile = (file: File) => {
     URL.revokeObjectURL(originalImageUrl.value)
   }
 
-  selectedFiles.value = [file]
   originalFileName.value = file.name
   originalImageUrl.value = URL.createObjectURL(file)
   editor.clear()
@@ -262,11 +261,6 @@ const loadFile = (file: File) => {
   sourceImage.value = null
   refreshCropper()
   schedulePreview()
-}
-
-const handleFileChange = (files: File[] | File | null) => {
-  const file = Array.isArray(files) ? files[0] : files
-  if (file) loadFile(file)
 }
 
 const handleDrop = (event: DragEvent) => {
@@ -290,6 +284,16 @@ const handleDragLeave = () => {
 
 const triggerOperationsLoad = () => {
   operationsJsonInput.value?.click()
+}
+
+const triggerImageLoad = () => {
+  imageInput.value?.click()
+}
+
+const handleNativeFileChange = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (file) loadFile(file)
 }
 
 const applyCrop = () => {
@@ -456,15 +460,18 @@ onBeforeUnmount(() => {
   <v-container class="editor-page pa-4 pa-md-8">
     <v-card class="editor-frame mx-auto" max-width="1400">
       <v-card-title class="editor-heading">
-        <div>
-          <div class="text-overline">PRINT / IMAGE LAB</div>
-          <div class="text-h4">Image editor</div>
+        <div class="brand-lockup">
+          <div class="brand-mark"><v-icon icon="mdi-image-filter-center-focus" /></div>
+          <div>
+            <div class="text-overline">PRINT / IMAGE LAB</div>
+            <div class="editor-title">Image editor</div>
+          </div>
         </div>
-        <div class="editor-badge">NON-DESTRUCTIVE</div>
+        <div class="editor-status"><span class="status-dot" /> Original preserved</div>
       </v-card-title>
       <v-card-text>
         <p class="editor-intro mb-5">
-          Prepare a clean, print-ready image while keeping the original untouched.
+          Shape your image, keep the source safe, and export when it feels right.
         </p>
         <v-snackbar v-model="snackbarVisible" :type="statusType" location="top">
           {{ statusMessage }}
@@ -472,23 +479,36 @@ onBeforeUnmount(() => {
         <div
           class="drop-zone"
           :class="{ 'drop-active': dragOver }"
+          role="button"
+          tabindex="0"
+          aria-label="Choose an image"
+          @click="triggerImageLoad"
+          @keydown.enter.prevent="triggerImageLoad"
+          @keydown.space.prevent="triggerImageLoad"
           @drop.prevent="handleDrop"
           @dragover.prevent="handleDragOver"
           @dragleave.prevent="handleDragLeave"
         >
-          <v-file-input
-            v-model="selectedFiles"
+          <input
+            ref="imageInput"
+            class="image-input"
+            type="file"
             accept="image/*"
-            label="Choose image"
-            prepend-icon="mdi-image"
-            show-size
-            @update:model-value="handleFileChange"
+            @change="handleNativeFileChange"
           />
-          <div class="drop-zone-label">Drag and drop an image here or click to choose a file</div>
+          <div class="upload-content">
+            <div class="upload-icon"><v-icon icon="mdi-cloud-upload-outline" size="28" /></div>
+            <div>
+              <div class="upload-title">Bring in an image</div>
+              <div class="drop-zone-label">Drop a file here, or browse from your device</div>
+            </div>
+            <div class="browse-action"><v-icon icon="mdi-folder-open-outline" /> Browse files</div>
+          </div>
         </div>
 
-        <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-0">
-          Preview and export use the same operation pipeline. Your source file is never changed.
+        <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-0 source-note">
+          <template #prepend><v-icon icon="mdi-shield-check-outline" /></template>
+          Preview and export use the same pipeline. Your source file is never changed.
         </v-alert>
 
         <input
@@ -502,6 +522,7 @@ onBeforeUnmount(() => {
         <div v-if="isLoaded" class="mt-6">
           <v-row class="top-workspace align-start">
             <v-col cols="12" md="7" class="workspace-column">
+              <div class="workspace-label"><span>01</span> Frame your image</div>
               <div class="cropper-shell">
                 <vue-cropper
                   v-if="originalImageUrl"
@@ -511,13 +532,27 @@ onBeforeUnmount(() => {
                 />
               </div>
 
-              <v-card variant="outlined" class="mt-4">
-                <v-card-title class="text-subtitle-1">Cropper controls</v-card-title>
+              <v-card variant="outlined" class="tool-card mt-4">
+                <v-card-title class="panel-title"
+                  ><v-icon icon="mdi-crop" /> Crop & frame</v-card-title
+                >
                 <v-card-text>
                   <div class="d-flex flex-wrap ga-2">
-                    <v-btn color="primary" @click="applyCrop">Apply</v-btn>
-                    <v-btn variant="outlined" @click="zoomCropper(0.1)">Zoom +</v-btn>
-                    <v-btn variant="outlined" @click="zoomCropper(-0.1)">Zoom -</v-btn>
+                    <v-btn color="primary" prepend-icon="mdi-check" @click="applyCrop"
+                      >Apply crop</v-btn
+                    >
+                    <v-btn
+                      variant="outlined"
+                      prepend-icon="mdi-magnify-plus-outline"
+                      @click="zoomCropper(0.1)"
+                      >Zoom in</v-btn
+                    >
+                    <v-btn
+                      variant="outlined"
+                      prepend-icon="mdi-magnify-minus-outline"
+                      @click="zoomCropper(-0.1)"
+                      >Zoom out</v-btn
+                    >
                   </div>
                   <div class="d-flex flex-wrap gap-2 mt-3 align-center">
                     <v-select
@@ -538,8 +573,12 @@ onBeforeUnmount(() => {
               </v-card>
             </v-col>
             <v-col cols="12" md="5" class="workspace-column">
+              <div class="workspace-label"><span>02</span> Check the result</div>
               <v-card class="preview-panel" variant="flat">
-                <v-card-title class="panel-title">Result</v-card-title>
+                <v-card-title class="result-heading">
+                  <span><v-icon icon="mdi-eye-outline" /> Result</span>
+                  <span class="live-pill"><span class="status-dot" /> Live</span>
+                </v-card-title>
                 <v-card-text class="preview-stage">
                   <img
                     v-if="previewImageUrl"
@@ -589,16 +628,57 @@ onBeforeUnmount(() => {
                     :disabled="!editor.canRedo"
                     @click="redo"
                   />
-                  <v-btn variant="text" @click="resetEdits">Reset</v-btn>
+                  <v-btn variant="text" prepend-icon="mdi-restore" @click="resetEdits">Reset</v-btn>
                 </v-card-actions>
+              </v-card>
+              <div class="workspace-label export-label"><span>04</span> Take it with you</div>
+              <v-card variant="outlined" class="tool-card export-card">
+                <v-card-title class="panel-title"
+                  ><v-icon icon="mdi-export-variant" /> Export</v-card-title
+                >
+                <v-card-text>
+                  <div class="d-flex flex-wrap gap-2">
+                    <v-select
+                      v-model="exportFormat"
+                      :items="[
+                        { title: 'PNG', value: 'png' },
+                        { title: 'JPEG', value: 'jpeg' },
+                        { title: 'WebP', value: 'webp' },
+                      ]"
+                      label="Export format"
+                      density="compact"
+                      style="max-width: 180px"
+                    />
+                    <v-btn color="success" prepend-icon="mdi-download" @click="exportImage"
+                      >Download image</v-btn
+                    >
+                    <v-btn variant="tonal" prepend-icon="mdi-code-json" @click="downloadOperations"
+                      >Save settings</v-btn
+                    >
+                  </div>
+                  <v-slider
+                    v-if="exportFormat !== 'png'"
+                    v-model="exportQuality"
+                    :label="`Quality ${Math.round(exportQuality * 100)}%`"
+                    min="0.5"
+                    max="1"
+                    step="0.01"
+                    style="max-width: 220px"
+                    class="mt-4"
+                  />
+                </v-card-text>
               </v-card>
             </v-col>
           </v-row>
 
           <v-row>
             <v-col cols="12" md="7" class="workspace-column">
-              <v-card variant="outlined">
-                <v-card-title class="text-subtitle-1">Live adjustments</v-card-title>
+              <div class="workspace-label"><span>03</span> Tune the mood</div>
+              <v-card variant="outlined" class="tool-card adjustment-card">
+                <v-card-title class="panel-title">
+                  <span><v-icon icon="mdi-tune-variant" /> Adjustments</span>
+                  <span class="control-count">{{ filterControls.length }} controls</span>
+                </v-card-title>
                 <v-card-text>
                   <div class="preset-row mb-4">
                     <v-select
@@ -615,7 +695,9 @@ onBeforeUnmount(() => {
                       <v-btn variant="tonal" @click="applyFilterPreset('bw')">B&W</v-btn>
                     </div>
                   </div>
-                  <div class="filter-preview mb-4">{{ operationsSummary }}</div>
+                  <div class="filter-preview mb-4">
+                    <v-icon icon="mdi-chart-bubble" /> {{ operationsSummary }}
+                  </div>
                   <div
                     v-for="control in filterControls"
                     :key="control.key"
@@ -644,7 +726,12 @@ onBeforeUnmount(() => {
                     />
                   </div>
                   <div class="mt-4">
-                    <v-btn variant="tonal" @click="triggerOperationsLoad">Load ops JSON</v-btn>
+                    <v-btn
+                      variant="tonal"
+                      prepend-icon="mdi-upload-outline"
+                      @click="triggerOperationsLoad"
+                      >Load settings</v-btn
+                    >
                     <div class="text-body-2 mt-2">
                       {{
                         loadedOperationsFile
@@ -656,39 +743,6 @@ onBeforeUnmount(() => {
                 </v-card-text>
               </v-card>
             </v-col>
-
-            <v-col cols="12" md="5" class="workspace-column">
-              <v-card variant="outlined" class="mt-4">
-                <v-card-title class="panel-title">Export</v-card-title>
-                <v-card-text>
-                  <div class="d-flex flex-wrap gap-2">
-                    <v-select
-                      v-model="exportFormat"
-                      :items="[
-                        { title: 'PNG', value: 'png' },
-                        { title: 'JPEG', value: 'jpeg' },
-                        { title: 'WebP', value: 'webp' },
-                      ]"
-                      label="Export format"
-                      density="compact"
-                      style="max-width: 180px"
-                    />
-                    <v-btn color="success" @click="exportImage">Export image</v-btn>
-                    <v-btn variant="tonal" @click="downloadOperations">Export JSON</v-btn>
-                  </div>
-                  <v-slider
-                    v-if="exportFormat !== 'png'"
-                    v-model="exportQuality"
-                    :label="`Quality ${Math.round(exportQuality * 100)}%`"
-                    min="0.5"
-                    max="1"
-                    step="0.01"
-                    style="max-width: 220px"
-                    class="mt-4"
-                  />
-                </v-card-text>
-              </v-card>
-            </v-col>
           </v-row>
         </div>
       </v-card-text>
@@ -697,13 +751,176 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.cropper-shell {
-  position: relative;
-  background: #e9edf0;
-  border: 1px solid #d5dce0;
-  border-radius: 4px;
+:global(*) {
+  box-sizing: border-box;
+}
+
+:global(body) {
+  margin: 0;
+  background: #e9eee9;
+  color: #1f2b2a;
+  font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+}
+
+.editor-page {
+  min-height: 100vh;
+  padding-top: 36px !important;
+  padding-bottom: 60px !important;
+  background:
+    radial-gradient(circle at 8% 4%, rgba(231, 111, 81, 0.13), transparent 24rem),
+    radial-gradient(circle at 96% 20%, rgba(42, 157, 143, 0.12), transparent 26rem), #e9eee9;
+}
+
+.editor-frame {
   overflow: hidden;
-  min-height: 320px;
+  border: 1px solid #d2dbd5;
+  border-radius: 22px;
+  background: rgba(251, 250, 247, 0.92);
+  box-shadow: 0 24px 70px rgba(37, 58, 51, 0.12);
+}
+
+.editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 30px 34px 8px;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 12px;
+  background: #203d38;
+  color: #f6c5a8;
+  box-shadow: 0 7px 16px rgba(32, 61, 56, 0.2);
+}
+
+.editor-title {
+  color: #203d38;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(1.8rem, 3vw, 2.6rem);
+  line-height: 1.05;
+}
+
+.editor-status,
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #47736a;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2a9d8f;
+  box-shadow: 0 0 0 4px rgba(42, 157, 143, 0.14);
+}
+
+.editor-intro {
+  max-width: 620px;
+  color: #61716b;
+  font-size: 1rem;
+}
+
+.source-note {
+  border: 1px solid rgba(42, 157, 143, 0.2);
+}
+
+.drop-zone {
+  position: relative;
+  border: 1px dashed #a9bcb3;
+  border-radius: 14px;
+  padding: 20px 22px;
+  background: #f3f7f3;
+  text-align: left;
+  user-select: none;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.image-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.drop-zone:hover,
+.drop-active {
+  border-color: #e76f51;
+  background: #fff8f2;
+  transform: translateY(-1px);
+}
+
+.upload-content {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.upload-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  background: #f9d8c8;
+  color: #c4553b;
+}
+
+.upload-title {
+  color: #203d38;
+  font-weight: 700;
+}
+
+.drop-zone-label {
+  margin-top: 3px;
+  color: #71817a;
+  font-size: 0.86rem;
+}
+
+.browse-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 11px 16px;
+  border: 1px solid #e76f51;
+  border-radius: 9px;
+  background: #fff;
+  color: #c4553b;
+  font-size: 0.86rem;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.drop-zone:focus-visible {
+  outline: 3px solid rgba(231, 111, 81, 0.28);
+  outline-offset: 3px;
+}
+
+.drop-zone:hover .browse-action,
+.drop-zone:focus-visible .browse-action {
+  background: #fff3ed;
 }
 
 .workspace-column {
@@ -712,6 +929,43 @@ onBeforeUnmount(() => {
 
 .top-workspace {
   align-items: flex-start;
+}
+
+.workspace-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 4px 0 11px;
+  color: #71817a;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace-label span {
+  color: #e76f51;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1rem;
+}
+
+.cropper-shell {
+  position: relative;
+  min-height: 430px;
+  overflow: hidden;
+  border: 1px solid #cad4d0;
+  border-radius: 14px;
+  background: #dfe6e1;
+  box-shadow: inset 0 0 0 8px rgba(255, 255, 255, 0.18);
+}
+
+.cropper-shell::after {
+  position: absolute;
+  inset: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 8px;
+  pointer-events: none;
+  content: '';
 }
 
 :deep(.cropper-container) {
@@ -723,6 +977,59 @@ onBeforeUnmount(() => {
   border-radius: 0;
 }
 
+.tool-card {
+  border: 1px solid #d7e0da !important;
+  border-radius: 14px !important;
+  background: #fff !important;
+  box-shadow: 0 8px 22px rgba(45, 67, 59, 0.05) !important;
+}
+
+.panel-title,
+.result-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #203d38;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.panel-title > span,
+.result-heading > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.panel-title .v-icon,
+.result-heading .v-icon {
+  color: #e76f51;
+}
+
+.control-count {
+  color: #93a19b;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.preview-panel {
+  border: 1px solid #304a45;
+  border-radius: 14px;
+  background: #202827;
+  color: #f5f7f5;
+  box-shadow: 0 16px 30px rgba(25, 43, 39, 0.18);
+}
+
+.preview-stage {
+  display: flex;
+  min-height: 430px;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: repeating-conic-gradient(#eef1eb 0% 25%, #dce3dc 0% 50%) 50% / 22px 22px;
+}
+
 .preview-image {
   display: block;
   max-width: 100%;
@@ -730,157 +1037,120 @@ onBeforeUnmount(() => {
   height: auto;
   margin: auto;
   object-fit: contain;
-  background: #ffffff;
-}
-
-.editor-page {
-  min-height: 100vh;
-  background: #e8eceb;
-}
-
-.editor-frame {
-  overflow: hidden;
-  border: 1px solid #ccd5d5;
-  border-radius: 6px;
-  background: #f8faf9;
-}
-
-.editor-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 26px 28px 10px;
-}
-
-.editor-intro {
-  color: #52605f;
-}
-
-.editor-badge {
-  padding: 6px 10px;
-  border: 1px solid #7d9990;
-  border-radius: 3px;
-  color: #42675e;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.panel-title {
-  font-weight: 650;
-  letter-spacing: 0;
-}
-
-.preview-panel {
-  border: 1px solid #ccd5d5;
-  background: #202827;
-  color: #f5f7f5;
-}
-
-.preview-stage {
-  display: flex;
-  min-height: 320px;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: repeating-conic-gradient(#f7f8f6 0% 25%, #e5e9e6 0% 50%) 50% / 20px 20px;
+  background: #fff;
 }
 
 .preview-empty {
-  color: #52605f;
-}
-
-.drop-zone {
-  border: 2px dashed rgba(0, 0, 0, 0.16);
-  border-radius: 4px;
-  padding: 18px;
-  transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease;
-  position: relative;
-  text-align: center;
-  user-select: none;
-}
-
-.drop-zone:hover {
-  border-color: rgba(25, 118, 210, 0.6);
-}
-
-.drop-zone-label {
-  margin-top: 10px;
-  color: rgba(0, 0, 0, 0.65);
-}
-
-.drop-active {
-  border-color: #1976d2;
-  background: rgba(25, 118, 210, 0.08);
+  color: #73827b;
 }
 
 .preview-actions {
   justify-content: flex-start;
-  padding: 16px;
   gap: 10px;
+  padding: 16px;
+  background: #202827;
 }
 
-.filter-control-row {
-  /* margin-bottom: 18px; */
+.preview-actions :deep(.v-btn) {
+  color: #eef3ed;
 }
 
 .filter-control-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  /* margin-bottom: 8px; */
+  justify-content: space-between;
 }
 
 .filter-label {
-  font-weight: 500;
+  color: #304a45;
+  font-size: 0.88rem;
+  font-weight: 700;
 }
 
 .filter-value {
-  color: rgba(0, 0, 0, 0.6);
   margin-left: 10px;
+  color: #e76f51;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .filter-preview {
-  font-size: 0.95rem;
-  color: rgba(0, 0, 0, 0.75);
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: #f1f6f1;
+  color: #60716a;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.filter-preview .v-icon {
+  flex: 0 0 auto;
+  color: #2a9d8f;
+}
+
+.export-card {
+  margin-top: 0;
+}
+
+.export-label {
+  margin-top: 22px;
 }
 
 @media (max-width: 900px) {
+  .editor-heading {
+    padding: 22px 20px 8px;
+  }
+
+  .preview-stage,
   .cropper-shell {
     min-height: 260px;
   }
 
-  .drop-zone {
-    padding: 14px;
+  .upload-content {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
-  .editor-heading {
-    padding: 20px 18px 8px;
-  }
-
-  .preview-stage {
-    min-height: 240px;
-  }
-
-  .d-flex.flex-wrap {
-    flex-direction: column;
-  }
-
-  .d-flex.flex-wrap .v-btn,
-  .d-flex.flex-wrap .v-select {
+  .browse-action {
     width: 100%;
+    justify-content: center;
+    margin: 0;
   }
 }
 
 @media (max-width: 600px) {
-  .cropper-shell {
-    min-height: 220px;
+  .editor-page {
+    padding-top: 16px !important;
+  }
+
+  .editor-heading {
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .editor-status {
+    padding-top: 4px;
+    font-size: 0.64rem;
+  }
+
+  .editor-frame :deep(.v-card-text) {
+    padding-right: 16px;
+    padding-left: 16px;
   }
 
   .preview-image {
     max-height: 300px;
+  }
+
+  .preview-actions {
+    gap: 4px;
+    padding: 10px;
   }
 }
 </style>

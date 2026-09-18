@@ -9,5 +9,17 @@ export default createVuetify({
   directives,
   theme: {
     defaultTheme: 'light',
+    themes: {
+      light: {
+        dark: false,
+        colors: {
+          primary: '#e76f51',
+          secondary: '#2a9d8f',
+          success: '#2a9d8f',
+          surface: '#fbfaf7',
+          background: '#e9eee9',
+        },
+      },
+    },
   },
 })
